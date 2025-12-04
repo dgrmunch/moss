@@ -8,33 +8,39 @@ MiniGem Client Navigator (fixed to your specs)
 - Muestra datos de author.json si existe en el servidor
 """
 
-import socket
+import requests
 import re
 import os
 import json
+from urllib.parse import urljoin
 from rich.console import Console
 from rich.markdown import Markdown
 
 console = Console()
 
+
 def request(host: str, port: int, path: str) -> tuple[str, str]:
-    with socket.create_connection((host, port)) as s:
-        s.sendall((path + "\n").encode())
-        data = b""
-        while True:
-            chunk = s.recv(4096)
-            if not chunk:
-                break
-            data += chunk
-
-    text = data.decode("utf-8", "replace")
-
-    if "\n\n" in text:
-        header, body = text.split("\n\n", 1)
+    if port == 443:
+        scheme = "https"
     else:
-        header, body = "20 OK", text
+        scheme = "http"
 
-    return header, body
+    # Construye URL
+    if path.startswith("/"):
+        path = path[1:]
+
+    url = f"{scheme}://{host}:{port}/{path}"
+
+    try:
+        resp = requests.get(url, timeout=10)
+    except Exception as e:
+        return "40 ERROR", f"Request failed: {e}"
+
+    if resp.status_code != 200:
+        return f"40 HTTP {resp.status_code}", resp.text
+
+    return "20 OK", resp.text
+
 
 
 def extract_links(md_text: str) -> list[tuple[str, str]]:
@@ -57,8 +63,6 @@ def insert_inline_numbers_and_style(md_text: str):
     numbered = md_text
     links = []
 
-    CYAN = "\033[36m"
-    RESET = "\033[0m"
     MAGENTA = "\033[35m"
 
     for i, (text, link) in enumerate(matches, start=1):
@@ -70,24 +74,26 @@ def insert_inline_numbers_and_style(md_text: str):
     return numbered, links
 
 
+
 def main():
     console.print("[bold green]MiniGem Navigator[/bold green]")
 
     host = console.input("Server hostname/IP (default localhost): ").strip() or "localhost"
-    port_str = console.input("Server port (default 1965): ").strip()
-    port = int(port_str) if port_str.isdigit() else 1965
+    port_str = console.input("Server port (default 80): ").strip()
+    port = int(port_str) if port_str.isdigit() else 80
 
     history = []
     current_path = "index.md"
 
     author_info = None
 
-    # Intenta cargar author.json al inicio
+    # Intenta cargar author.json
     try:
         _, author_body = request(host, port, "author.json")
         author_info = json.loads(author_body)
     except Exception:
         author_info = None
+
 
     while True:
         console.clear()
@@ -108,7 +114,6 @@ def main():
         else:
             rendered_body, links = insert_inline_numbers_and_style(body)
 
-            # Ajusta títulos para que el primer header no sea demasiado grande
             rendered_body = rendered_body.replace("# ", "## ")
             console.print(Markdown(rendered_body))
 
