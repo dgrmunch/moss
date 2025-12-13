@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <title>moss ://</title>
+    <link rel="stylesheet" href="style.css"> 
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body class="light-mode"> 
+    
+    <div id="app-container">
+        <header id="main-header">
+            <h1 class="logo-title"><span class="cloud-icon" aria-hidden="true">&#9729;</span>moss://</h1>
+            
+            <div class="header-controls">
+                <button id="size-down" title="Disminuir Tamaño de Texto">A-</button>
+                <button id="size-up" title="Aumentar Tamaño de Texto">A+</button>
+
+                <button id="theme-toggle" title="Cambiar Tema (Claro/Oscuro)">
+                    <span id="theme-icon">&#9728;</span>
+                </button>
+                <button id="menu-toggle" class="menu-toggle">
+                    &#9776;
+                </button>
+            </div>
+        </header>
+        
+        <nav id="sidebar" class="hidden"></nav>
+        
+        <main id="content">
+            <p class="initial-load">Loading moss content...</p>
+        </main>
+
+        <footer id="main-footer">
+            <span id="node-url-footer">&#128279; </span><span id="footer-text"></span>
+        </footer>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/marked@4.2.12/marked.min.js"></script>
+
+    <script defer>
+        const contentArea = document.getElementById("content");
+        const sidebar = document.getElementById("sidebar");
+        const menuToggle = document.getElementById("menu-toggle");
+        const themeToggle = document.getElementById("theme-toggle");
+        const themeIcon = document.getElementById("theme-icon");
+        const sizeUp = document.getElementById("size-up");
+        const sizeDown = document.getElementById("size-down");
+        const logoTitle = document.querySelector('.logo-title');
+        const nodeUrlFooter = document.getElementById('footer-text'); 
+        const defaultFile = 'index.md'; 
+        
+        let currentDocumentBaseUrl = null; 
+        
+        // Configuración de tamaño de fuente
+        const MIN_SIZE = 90; 
+        const MAX_SIZE = 200; 
+        const STEP = 10;
+        const DEFAULT_SIZE = 100;
+
+        // --- Funciones de tamaño, tema, navegación (sin cambios relevantes) ---
+        
+        function applyFontSize(size) {
+            document.body.style.fontSize = `${size}%`;
+        }
+
+        function loadFontSize() {
+            const savedSize = parseInt(localStorage.getItem('fontSize'), 10);
+            if (!isNaN(savedSize)) {
+                applyFontSize(savedSize);
+            }
+        }
+        
+        function changeFontSize(direction) {
+            let currentSize = parseInt(document.body.style.fontSize) || DEFAULT_SIZE;
+            if (direction === 'up') {
+                currentSize = Math.min(currentSize + STEP, MAX_SIZE);
+            } else if (direction === 'down') {
+                currentSize = Math.max(currentSize - STEP, MIN_SIZE);
+            }
+            applyFontSize(currentSize);
+            localStorage.setItem('fontSize', currentSize);
+        }
+
+        sizeUp.addEventListener('click', () => changeFontSize('up'));
+        sizeDown.addEventListener('click', () => changeFontSize('down'));
+
+
+        function setIcon(isDark) {
+            themeIcon.innerHTML = isDark ? '&#9790;' : '&#9728;';
+        }
+
+        function toggleTheme() {
+            const body = document.body;
+            body.classList.toggle('dark-mode');
+            const isDark = body.classList.contains('dark-mode');
+            localStorage.setItem('theme', isDark ? 'dark' : 'light');
+            setIcon(isDark);
+        }
+
+        function loadTheme() {
+            const savedTheme = localStorage.getItem('theme');
+            const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            if (savedTheme === 'dark' || (savedTheme === null && prefersDark)) {
+                document.body.classList.add('dark-mode');
+                setIcon(true);
+            } else {
+                document.body.classList.remove('dark-mode');
+                setIcon(false);
+            }
+        }
+        themeToggle.addEventListener('click', toggleTheme);
+
+        function closeMenu() {
+           sidebar.classList.add('hidden');
+        }
+        menuToggle.addEventListener('click', () => {
+            sidebar.classList.toggle('hidden');
+        });
+        
+        function resolveRelativeUrl(baseUrl, relativePath) {
+            if (!baseUrl || !relativePath) return relativePath;
+            try {
+                const lastSlashIndex = baseUrl.lastIndexOf('/');
+                const baseDir = lastSlashIndex !== -1 ? baseUrl.substring(0, lastSlashIndex + 1) : baseUrl;
+                const absoluteUrl = new URL(relativePath, baseDir);
+                return absoluteUrl.href;
+            } catch (e) {
+                console.error("Error resolving URL:", e);
+                return relativePath;
+            }
+        }
+
+        const customRenderer = {
+            link(href, title, text) {
+                if (href.endsWith('.md') && !href.startsWith('http')) {
+                    let targetPath = href;
+                    if (currentDocumentBaseUrl) {
+                        targetPath = resolveRelativeUrl(currentDocumentBaseUrl, href);
+                    }
+                    const internalUrl = `index.html?file=${encodeURIComponent(targetPath)}`;
+                    return `<a href="${internalUrl}" onclick="handleInternalLink(event, '${targetPath}')" ${title ? `title="${title}"` : ''}>${text}</a>`;
+                } 
+                if (href.startsWith('moss://')) {
+                    const rawUrl = 'https://' + href.substring('moss://'.length);
+                    const fileParamUrl = `index.html?file=${encodeURIComponent(rawUrl)}`;
+                    return `<a href="${fileParamUrl}" onclick="handleInternalLink(event, '${rawUrl}')" ${title ? `title="${title}"` : ''} class="moss-link">${text}</a>`;
+                }
+                return `<a href="${href}" ${title ? `title="${title}"` : ''} target="_blank">${text}</a>`;
+            },
+            image(href, title, text) {
+                let finalHref = href;
+                if (currentDocumentBaseUrl) {
+                    finalHref = resolveRelativeUrl(currentDocumentBaseUrl, href);
+                }
+                if (finalHref.startsWith('moss://')) {
+                    finalHref = 'https://' + finalHref.substring('moss://'.length);
+                }
+                return `<img src="${finalHref}" alt="${text}" ${title ? `title="${title}"` : ''} />`;
+            }
+        };
+
+        marked.use({ renderer: customRenderer });
+
+        function handleInternalLink(event, filePath) {
+            event.preventDefault(); 
+            loadMarkdown(filePath); 
+            closeMenu(); 
+        }
+        window.handleInternalLink = handleInternalLink;
+
+        function loadMarkdown(filePath) {
+            let fetchUrl = filePath;
+            if (!fetchUrl.startsWith('http')) {
+                if (fetchUrl.startsWith('moss://')) {
+                    fetchUrl = 'https://' + fetchUrl.substring('moss://'.length);
+                }
+            }
+
+            contentArea.innerHTML = `<p class="prompt">Fetching file: ${fetchUrl}...</p>`;
+            currentDocumentBaseUrl = fetchUrl.startsWith('http') ? fetchUrl : null;
+
+            fetch(fetchUrl)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`File not found or access denied: ${response.status}`);
+                    }
+                    return response.text();
+                })
+                .then(markdown => {
+                    contentArea.innerHTML = marked.parse(markdown);
+                    history.pushState(null, null, `?file=${encodeURIComponent(filePath)}`);
+                    closeMenu(); 
+                })
+                .catch(error => {
+                    contentArea.innerHTML = `
+                        <p class="error-prompt">ERROR: Cannot load ${filePath}</p>
+                        <p class="error-prompt">${error.message}</p>
+                        <p class="prompt">Check the file URL or local path.</p>
+                    `;
+                    console.error("Markdown load error:", error);
+                    closeMenu(); 
+                    currentDocumentBaseUrl = null; 
+                });
+        }
+
+        // --- 5. LISTADO DE ARCHIVOS DINÁMICO DESDE JSON (ACTUALIZADO) ---
+        async function fetchAndCreateSidebar() {
+            sidebar.innerHTML = '<p class="prompt">Fetching node configuration (seed.json)...</p>';
+            
+            try {
+                const response = await fetch('seed.json'); 
+                if (!response.ok) {
+                    throw new Error("Could not load seed.json. Ensure it exists in the root directory.");
+                }
+                const seedData = await response.json(); 
+
+                const fileList = seedData.menu || [];
+                const nodeName = seedData['node-name'] || 'Node Name Missing';
+                // Asumo que 'node-url' no está definido en tu JSON, usaremos 'node-name' como URL
+                const nodeUrl = seedData['node-url'] || 'url-missing'; 
+
+                // ACTUALIZAR TITLE Y H1
+                document.title = `moss://${nodeUrl}`;
+                logoTitle.textContent = `${nodeName}`; 
+
+                nodeUrlFooter.textContent = `moss://${nodeUrl}`; 
+
+                // POBULAR SIDEBAR
+                let listHtml = ``;
+                listHtml += '<ul class="file-list">';
+                
+                fileList.forEach(file => {
+                    if (file.endsWith('.md')) {
+                        listHtml += `
+                            <li>
+                                <a href="javascript:void(0)" onclick="loadMarkdown('${file}')">
+                                    ${file}
+                                </a>
+                            </li>
+                        `;
+                    }
+                });
+                
+                listHtml += '</ul>';
+                sidebar.innerHTML = listHtml;
+
+            } catch (error) {
+                sidebar.innerHTML = `
+                    <p class="error-prompt">ERROR:</p>
+                    <p class="error-prompt">Cannot generate local file list from seed.json.</p>
+                    <p class="error-prompt">${error.message}</p>
+                `;
+                console.error("Sidebar generation error:", error);
+            }
+        }
+
+        function handleInitialLoad() {
+            const params = new URLSearchParams(window.location.search);
+            let requestedFile = params.get('file');
+            if (requestedFile) {
+                requestedFile = decodeURIComponent(requestedFile);
+            }
+            loadMarkdown(requestedFile || defaultFile);
+
+            window.onpopstate = () => {
+                const newParams = new URLSearchParams(window.location.search);
+                let newFile = newParams.get('file');
+                if (newFile) {
+                    newFile = decodeURIComponent(newFile);
+                }
+                loadMarkdown(newFile || defaultFile);
+            };
+        }
+
+        // 7. EJECUCIÓN: Llamada principal al cargar la página
+        document.addEventListener('DOMContentLoaded', () => {
+            loadTheme();
+            loadFontSize(); 
+            fetchAndCreateSidebar(); 
+            handleInitialLoad();
+        });
+
+    </script>
+</body>
+</html>
